@@ -24,9 +24,9 @@ no unseeded randomness.
 ## Build
 
 ```sh
-docker build -t josephlay/enclave-runtime:v1 .
-docker push josephlay/enclave-runtime:v1
-docker inspect --format='{{index .RepoDigests 0}}' josephlay/enclave-runtime:v1
+docker build -t ghcr.io/joseph-lay-prog/enclave-runtime:v1 .
+docker push ghcr.io/joseph-lay-prog/enclave-runtime:v1
+docker inspect --format='{{index .RepoDigests 0}}' ghcr.io/joseph-lay-prog/enclave-runtime:v1
 ```
 
 ## Verify
