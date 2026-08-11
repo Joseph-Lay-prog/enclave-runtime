@@ -16,10 +16,13 @@ Two phases, both driven only by what the relay returns:
 
 The attribute target is the known vocabulary augmented by anything the reads
 reveal, so a family revision that adds an attribute is still covered.  If the
-fact grammar changed and nothing parsed at all, fall back to index + full
-read: correctness over thrift.  One minimal completion satisfies the
-crossed-relay requirement.  Behaviour is a pure function of the observations —
-no wall clock, no unseeded randomness — so the metamorphic audit holds.
+sheet is short of complete after backfill — a changed grammar, an index that
+answered unexpectedly — fall back to index + full read: correctness over
+thrift.  Individual relay refusals degrade to empty observations rather than
+ending the run, and whatever the sheet holds is always submitted.  One minimal
+completion satisfies the crossed-relay requirement.  Behaviour is a pure
+function of the observations — no wall clock, no unseeded randomness — so the
+metamorphic audit holds.
 
 Licensed MIT.
 """
@@ -85,30 +88,46 @@ class Runtime:
                 out.append(head)
         return out
 
+    def _observe(self, action: str, **arguments) -> str:
+        """One relay action; a refused or failed call yields an empty
+        observation instead of ending the run. A single flaky action must not
+        zero an otherwise complete sheet."""
+        try:
+            return self.client.act(action, **arguments).text
+        except Exception:  # noqa: BLE001 — degrade, never crash the run
+            return ""
+
     def _read_new(self, doc_ids: list[str]) -> None:
         for doc_id in doc_ids:
             if doc_id in self.seen_docs:
                 continue
             self.seen_docs.add(doc_id)
-            self.sheet.absorb(self.client.act("read", doc_id=doc_id).text)
+            self.sheet.absorb(self._observe("read", doc_id=doc_id))
 
     def bootstrap(self) -> None:
         for term in _BOOTSTRAP_TERMS:
-            self._read_new(self._hits(self.client.act("search", term=term).text))
+            self._read_new(self._hits(self._observe("search", term=term)))
 
     def backfill(self) -> None:
         for entity in sorted(self.sheet.entities):
             if not self.sheet.gaps(entity):
                 continue
-            self._read_new(self._hits(self.client.act("search", term=entity).text))
+            self._read_new(self._hits(self._observe("search", term=entity)))
+
+    def complete_sheet(self) -> bool:
+        return bool(self.sheet.values) and not any(
+            self.sheet.gaps(entity) for entity in self.sheet.entities
+        )
 
     def full_sweep(self) -> None:
-        self._read_new(self._hits(self.client.act("index").text))
+        self._read_new(self._hits(self._observe("index")))
 
     def solve(self) -> None:
         self.bootstrap()
         self.backfill()
-        if not self.sheet.values:
+        if not self.complete_sheet():
+            # Anything short of a full sheet after backfill means the grammar
+            # or index behaved unexpectedly; buy correctness over thrift.
             self.full_sweep()
 
 
@@ -131,8 +150,14 @@ def main() -> int:
     with EnclaveClient() as client:
         briefing = client.initialise()
         runtime = Runtime(client)
-        runtime.solve()
-        _cross_relay(client, briefing.models)
+        try:
+            runtime.solve()
+        except Exception as error:  # noqa: BLE001 — a partial sheet still gets submitted
+            print(f"solve degraded: {error}", file=sys.stderr)
+        try:
+            _cross_relay(client, briefing.models)
+        except Exception as error:  # noqa: BLE001 — submit regardless; the duty call
+            print(f"completion failed: {error}", file=sys.stderr)
         accepted = client.submit(runtime.sheet.as_answer())
     return 0 if accepted else 1
 
