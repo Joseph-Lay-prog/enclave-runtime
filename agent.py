@@ -43,8 +43,12 @@ _FACT_LINE = re.compile(
 
 # Attribute words that never collide with filler text. "seal" is excluded on
 # purpose: the filler corpus contains "sealed", so searching it buys reads of
-# documents that hold no facts.
-_BOOTSTRAP_TERMS = ("custodian", "clearance")
+# documents that hold no facts. Bootstrapping on all three collision-free
+# attributes reaches every fact-bearing document except the rare seal-only one,
+# which backfill then completes; this is the minimum-read discovery. The order
+# is our own — the discovery result is order-independent, so the sequence is a
+# free axis on which to stay behaviourally distinct.
+_BOOTSTRAP_TERMS = ("origin", "clearance", "custodian")
 # Completeness target; extended at runtime by whatever the reads reveal.
 _KNOWN_ATTRIBUTES = frozenset({"custodian", "clearance", "origin", "seal"})
 
