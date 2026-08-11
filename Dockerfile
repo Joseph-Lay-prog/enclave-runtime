@@ -1,4 +1,6 @@
 FROM python:3.12-slim
+LABEL org.opencontainers.image.source="https://github.com/Joseph-Lay-prog/enclave-runtime" \
+      org.opencontainers.image.licenses="MIT"
 RUN apt-get update \
     && apt-get install -y --no-install-recommends git \
     && rm -rf /var/lib/apt/lists/* \
