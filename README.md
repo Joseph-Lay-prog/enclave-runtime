@@ -29,6 +29,12 @@ docker push ghcr.io/joseph-lay-prog/enclave-runtime:v1
 docker inspect --format='{{index .RepoDigests 0}}' ghcr.io/joseph-lay-prog/enclave-runtime:v1
 ```
 
+## Submitted image
+
+```
+ghcr.io/joseph-lay-prog/enclave-runtime@sha256:40cfaa73a66e4feebd4ab92da54e582af4dddb518d82589e02db6e65b30da500
+```
+
 ## Verify
 
 `agent.py` in this repository is byte-identical to `/app/agent.py` inside the
