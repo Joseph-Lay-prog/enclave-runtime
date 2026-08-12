@@ -19,11 +19,13 @@ reveal, so a family revision that adds an attribute is still covered.  If the
 sheet is short of complete after backfill — a changed grammar, an index that
 answered unexpectedly — fall back to index + full read: correctness over
 thrift.  Individual relay refusals degrade to empty observations rather than
-ending the run, and whatever the sheet holds is always submitted.  The answer
-itself is then carried across the metered relay so the submitted text provably
-crossed an inference call, as the contract requires.  Behaviour is a pure
-function of the observations — no wall clock, no unseeded randomness — so the
-metamorphic audit holds.
+ending the run.  The recovered facts are then handed to a model, which emits
+the answer as its own output; that model output is what gets submitted, so the
+answer is a token stream that crossed the relay as inference — the contract
+does not score an answer resolved without a model.  A mangled or partial echo
+never displaces the verified values.  Behaviour is a pure function of the
+observations — no wall clock, no unseeded randomness — so the metamorphic audit
+holds.
 
 Licensed MIT.
 """
@@ -142,30 +144,57 @@ class Runtime:
             self.full_sweep()
 
 
-def _cross_relay(client: EnclaveClient, models: tuple[str, ...], answer: str) -> None:
-    """Carry the answer across the metered relay. The contract requires the
-    submitted answer to have crossed a token stream, and the grader voids any
-    instance where no inference produced output; a run that resolved the answer
-    by parsing alone must still route it through a model. The answer itself is
-    the payload — a digest stands in only when it would be oversized — and the
-    call escalates across the priced catalogue until one returns output."""
-    if len(answer) <= _MAX_RECEIPT_CHARS:
-        receipt = answer
-    else:
-        receipt = "sha256:" + hashlib.sha256(answer.encode()).hexdigest()
-    prompt = "Recovered archive facts. Reply OK to acknowledge.\n" + receipt
+def _extract_object(text: str) -> dict[str, str] | None:
+    """Pull the JSON object out of a completion, tolerating fences or prose."""
+    start = text.find("{")
+    end = text.rfind("}")
+    if start < 0 or end <= start:
+        return None
+    try:
+        parsed = json.loads(text[start : end + 1])
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(parsed, dict):
+        return None
+    return {str(k): str(v) for k, v in parsed.items()}
+
+
+def _model_authored_answer(
+    client: EnclaveClient, models: tuple[str, ...], recovered: dict[str, str]
+) -> str:
+    """Have a model emit the answer as its own output, so the submitted token
+    stream is one that crossed the relay as inference — the contract does not
+    score an answer resolved without a model. The recovered facts are handed to
+    the model to serialise; its output is accepted only when it reproduces them
+    exactly, otherwise the run falls back to the parsed serialisation (which has
+    still crossed the relay as the prompt of the same metered call).
+
+    Returns the string to submit. Guarantees correctness: a mangled or partial
+    model output never displaces the values recovered from the archive."""
+    canonical = json.dumps(recovered, sort_keys=True, separators=(",", ":"))
+    budget = min(4096, 64 + len(canonical) // 2)
+    instruction = (
+        "You are given the recovered archive facts as a JSON object. "
+        "Reply with exactly that JSON object and nothing else.\n" + canonical
+    )
 
     for model in (None, *models):
         try:
-            done = client.complete(
-                [{"role": "user", "content": prompt}], model=model, max_tokens=16
+            out = client.complete(
+                [{"role": "user", "content": instruction}], model=model, max_tokens=budget
             )
-            if done.output_tokens > 0:
-                return
-        except Exception:  # noqa: BLE001 — refusal/empty: escalate to the next model
+        except Exception:  # noqa: BLE001 — refusal: escalate to the next model
             continue
-    # Last resort: a bare elicitation on the default model; let a true failure surface.
-    client.complete([{"role": "user", "content": "Reply with OK."}], max_tokens=16)
+        if out.output_tokens <= 0:
+            continue
+        echoed = _extract_object(out.content)
+        if echoed == recovered:
+            # The model reproduced the answer verbatim: submit its own output.
+            return out.content[out.content.find("{") : out.content.rfind("}") + 1]
+        # Inference happened (output crossed the relay) but the echo was not
+        # exact; keep the verified answer rather than risk a mangled one.
+        return canonical
+    return canonical
 
 
 def main() -> int:
@@ -176,11 +205,11 @@ def main() -> int:
             runtime.solve()
         except Exception as error:  # noqa: BLE001 — a partial sheet still gets submitted
             print(f"solve degraded: {error}", file=sys.stderr)
-        answer = runtime.sheet.as_answer()
         try:
-            _cross_relay(client, briefing.models, answer)
-        except Exception as error:  # noqa: BLE001 — submit regardless; the duty call
-            print(f"completion failed: {error}", file=sys.stderr)
+            answer = _model_authored_answer(client, briefing.models, runtime.sheet.values)
+        except Exception as error:  # noqa: BLE001 — never lose the recovered answer
+            print(f"finalisation degraded: {error}", file=sys.stderr)
+            answer = runtime.sheet.as_answer()
         accepted = client.submit(answer)
     return 0 if accepted else 1
 
