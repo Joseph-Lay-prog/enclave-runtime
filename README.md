@@ -32,7 +32,7 @@ docker inspect --format='{{index .RepoDigests 0}}' ghcr.io/joseph-lay-prog/encla
 ## Submitted image
 
 ```
-ghcr.io/joseph-lay-prog/enclave-runtime@sha256:51f52357d4d8e7d8d03fde1a8f8388e87c3acef9abed1f5a5ec7896228862eef
+ghcr.io/joseph-lay-prog/enclave-runtime@sha256:c83ae5cb33465f485f3bc319d3bce948c39ef92be629322a1eb054d31ea17aeb
 ```
 
 (v1: `…@sha256:40cfaa73a66e4feebd4ab92da54e582af4dddb518d82589e02db6e65b30da500`)
